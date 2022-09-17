@@ -1,5 +1,9 @@
+use bevy::prelude::*;
 use bevy::window::PresentMode;
-use bevy::{input::mouse::MouseButtonInput, prelude::*};
+
+mod camera;
+
+use camera::GameCameraPlugin;
 
 use bevy_mod_raycast::{
     DefaultPluginState, DefaultRaycastingPlugin, Intersection, RayCastMesh, RayCastMethod,
@@ -42,48 +46,56 @@ fn new_cube_from_raycast(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut mouse_button_input: EventReader<MouseButtonInput>,
+    mouse_input: Res<Input<MouseButton>>,
     query: Query<&Intersection<MyRaycastSet>>,
 ) {
     let intersection = query.get_single().ok();
 
     if let Some((position, normal)) = intersection.and_then(|i| Some((i.position()?, i.normal()?)))
     {
-        if let Some(mouse_button_input) = mouse_button_input.iter().next() {
-            if mouse_button_input.button != MouseButton::Left {
-                return;
-            }
-        } else {
+        if !mouse_input.just_pressed(MouseButton::Left) {
             return;
         }
-
-        mouse_button_input.clear();
-
-        println!("Clicked and got an intersection");
 
         let mut offset_x = 0.0;
         let mut offset_y = 0.0;
         let mut offset_z = 0.0;
 
+        // Using normal direction to put new cube next/below/over to the intersected one
+        // without the need to know which one is intersected.
         if normal.x > 0.0 {
             offset_x = 0.5;
         } else if normal.x < 0.0 {
-            offset_x = -0.5;
+            offset_x = -0.51;
         }
 
         if normal.y > 0.0 {
             offset_y = 0.5;
         } else if normal.y < 0.0 {
-            offset_y = -0.5;
+            offset_y = -0.51;
         }
 
         if normal.z > 0.0 {
             offset_z = 0.5;
         } else if normal.z < 0.0 {
-            offset_z = -0.5;
+            offset_z = -0.51;
         }
 
-        let rough_cube_position = *position + Vec3::new(offset_x, offset_y, offset_z);
+        let mut rough_cube_position =
+            *position + Vec3::new(offset_x, offset_y, offset_z) + Vec3::new(0.50, 0.50, 0.50);
+
+        // If the pos on an axis is negative, rounding will occur in the incorrect way.
+        if rough_cube_position.x < 0.0 {
+            rough_cube_position.x -= 1.0;
+        }
+
+        if rough_cube_position.y < 0.0 {
+            rough_cube_position.y -= 1.0;
+        }
+
+        if rough_cube_position.z < 0.0 {
+            rough_cube_position.z -= 1.0;
+        }
 
         // Rounding takes care of the good positionning of the cube
         let cube_position = BlockPosition {
@@ -106,7 +118,7 @@ fn new_cube_from_raycast(
     }
 }
 
-fn setup_base_grid(
+fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -144,17 +156,25 @@ fn setup_base_grid(
         ..Default::default()
     });
 
-    commands
-        .spawn_bundle(Camera3dBundle {
-            projection: bevy::render::camera::Projection::Orthographic(OrthographicProjection {
-                scale: 0.01,
-                ..default()
-            }),
-            transform: Transform::from_xyz(-5.0, 10.0, -5.0)
-                .looking_at(Vec3::new(2.5, 0.0, 2.5), Vec3::Y),
-            ..default()
-        })
-        .insert(RayCastSource::<MyRaycastSet>::new()); // Designate the camera as our source
+    // Small cubes to indicate directions
+    commands.spawn_bundle(PbrBundle {
+        mesh: meshes.add(Mesh::from(shape::Cube { size: 0.5 })),
+        material: materials.add(Color::rgb(1.0, 0.0, 0.0).into()),
+        transform: Transform::from_xyz(5.0, 0.0, 0.0),
+        ..default()
+    });
+    commands.spawn_bundle(PbrBundle {
+        mesh: meshes.add(Mesh::from(shape::Cube { size: 0.5 })),
+        material: materials.add(Color::rgb(0.0, 1.0, 0.0).into()),
+        transform: Transform::from_xyz(0.0, 5.0, 0.0),
+        ..default()
+    });
+    commands.spawn_bundle(PbrBundle {
+        mesh: meshes.add(Mesh::from(shape::Cube { size: 0.5 })),
+        material: materials.add(Color::rgb(0.0, 0.0, 1.0).into()),
+        transform: Transform::from_xyz(0.0, 0.0, 5.0),
+        ..default()
+    });
 }
 
 fn main() {
@@ -165,11 +185,12 @@ fn main() {
         })
         .add_plugins(DefaultPlugins)
         .add_plugin(DefaultRaycastingPlugin::<MyRaycastSet>::default())
+        .add_plugin(GameCameraPlugin)
         .add_system_to_stage(
             CoreStage::First,
             update_raycast_with_cursor.before(RaycastSystem::BuildRays::<MyRaycastSet>),
         )
-        .add_startup_system(setup_base_grid)
+        .add_startup_system(setup)
         .add_system(new_cube_from_raycast)
         .run();
 }
